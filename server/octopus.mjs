@@ -363,7 +363,8 @@ export function createOctopus(env) {
       const halfHours = db.prepare('SELECT fuel, t, kwh FROM usage WHERE t >= ? ORDER BY t').all(now - 2 * DAY);
       return {
         tariff: { ...s.info, offPeakNow: isOffPeak(now), rateNow: elecRate(now) },
-        live: s.live, recent,
+        // after a restart (or while Octopus is rate-limiting) show the newest stored reading with its time
+        live: s.live || (live.length ? { t: live[live.length - 1].t, w: live[live.length - 1].w } : null), recent,
         power24h: [...buckets.entries()].map(([t, [sum, n]]) => [t, Math.round(sum / n)]),
         today: days[0],
         days: days.reverse(),
