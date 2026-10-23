@@ -1,0 +1,10 @@
+data/
+.env
+android/build/
+android/*.apk
+android/*.idsig
+android/*.keystore
+__pycache__/
+*.pyc
+CLAUDE.local.md
+node_modules/

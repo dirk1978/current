@@ -1,0 +1,15 @@
+{
+  "name": "current",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The GB electricity grid and your own home energy (Octopus, Ohme) on one beautiful page, plus an Android app and widget.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22.5" },
+  "scripts": {
+    "setup": "./setup.sh",
+    "start": "node --no-warnings server/server.mjs",
+    "android": "./android/build.sh",
+    "screenshots": "node tools/shot.mjs"
+  }
+}

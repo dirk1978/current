@@ -1,0 +1,17 @@
+# Run with: docker compose up -d
+# Settings come from .env next to this file (copy .env.example, or run ./setup.sh). With no ACCESS_TOKEN set,
+# the server makes one and prints the link to open in its log: docker compose logs current
+services:
+  current:
+    image: ghcr.io/dirk1978/current:latest
+    # build: .        # use this instead of image: to build from this checkout
+    restart: unless-stopped
+    ports:
+      - "${PORT:-8092}:8092"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      PORT: "8092"
+    volumes:
+      - ./data:/app/data

@@ -1,0 +1,31 @@
+# systemd unit template; setup.sh fills in @USER@, @GROUP@, @DIR@ and @NODE@.
+[Unit]
+Description=Current: national grid + home energy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=@DIR@
+ExecStart=@NODE@ --no-warnings @DIR@/server/server.mjs
+Restart=on-failure
+RestartSec=5
+# hardening: read-only everywhere except the data folder
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=@DIR@/data
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+MemoryMax=384M
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#06080f">
+<title>Current</title>
+<link rel="icon" href="icon.svg">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+<script src="config.js"></script>
+<script src="vendor/qrcode.js" defer></script>
+<script src="charts.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<div class="aura"></div>
+<div class="grain"></div>
+
+<template id="logo-tpl"><svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2ee6c9"/><stop offset="1" stop-color="#3fb6ff"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="none" stroke="url(#lg)" stroke-width="2.4" stroke-dasharray="70 18" stroke-linecap="round" transform="rotate(-60 16 16)"/><path d="M17.5 6.5 10 18h5l-1.5 7.5L21 14h-5z" fill="url(#lg)"/></svg></template>
+
+<main>
+  <header class="top">
+    <div class="brand" id="brand"></div>
+    <div class="top-right">
+      <button class="connect" id="connect" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M11 18h2"/></svg>Connect phone</button>
+      <div class="live" id="status"><i></i><span id="status-text">CONNECTING</span></div>
+    </div>
+  </header>
+
+  <!-- GRID -->
+  <section class="page" id="grid">
+    <div id="grid-err" class="wide"></div>
+    <div class="card hero">
+      <h2>Great Britain right now <span class="aside" id="grid-time"></span></h2>
+      <div class="ringwrap">
+        <div id="ring"></div>
+        <div class="ringcentre">
+          <div class="big" id="carbon-val">0</div>
+          <div class="unit">gCO₂ PER kWh</div>
+          <span class="pill" id="carbon-pill"></span>
+        </div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b><span id="demand">0</span><small>GW</small></b><span>Demand</span></div>
+        <div class="stat"><b><span id="lowc">0</span><small>%</small></b><span>Low carbon</span></div>
+        <div class="stat"><b><span id="renew">0</span><small>%</small></b><span>Renewable</span></div>
+      </div>
+    </div>
+
+    <div class="card reveal">
+      <h2>Generation <span class="aside">GW · share</span></h2>
+      <div class="fuels" id="fuels"></div>
+    </div>
+
+    <div class="card reveal wide">
+      <h2>Last 24 hours <span class="aside">GW</span></h2>
+      <div class="legend" id="mix-legend"></div>
+      <div id="mix-chart"></div>
+    </div>
+
+    <div class="card reveal wide">
+      <h2>Weather across Britain <span class="aside">same 24 hours</span></h2>
+      <h3 class="wx-h" style="margin-top:0"><span><i style="--c:var(--wind)"></i>Wind at turbine height</span><em>mph</em></h3>
+      <div id="wx-wind"></div>
+      <h3 class="wx-h"><span><i style="--c:var(--solar)"></i>Sunshine</span><em>W/m²</em></h3>
+      <div id="wx-sun"></div>
+      <h3 class="wx-h"><span><i style="--c:var(--gasfuel)"></i>Temperature</span><em>°C</em></h3>
+      <div id="wx-temp"></div>
+      <div class="callout" id="wx-next"></div>
+    </div>
+
+    <div class="card reveal">
+      <h2>Carbon intensity <span class="aside">g/kWh · forecast dashed</span></h2>
+      <div id="carbon-chart"></div>
+      <div class="callout" id="carbon-best"></div>
+    </div>
+
+    <div class="card reveal">
+      <h2>Interconnectors <span class="aside">GW</span></h2>
+      <div class="ic-head"><span></span><span></span><span><span>export</span><span>import</span></span><span></span></div>
+      <div class="ics" id="ics"></div>
+      <div class="ic-sum" id="ic-sum"></div>
+    </div>
+
+    <div class="duo reveal card" style="background:none;border:0;padding:0;box-shadow:none;backdrop-filter:none;overflow:visible">
+      <div class="card gauge">
+        <h2>Frequency</h2>
+        <div id="freq-gauge"></div>
+        <div class="val" id="freq-val">—</div>
+        <div class="mini" id="freq-spark"></div>
+        <div class="sub" style="font-size:11.5px;margin-top:4px">last 15 minutes</div>
+      </div>
+      <div class="card">
+        <h2>Wholesale</h2>
+        <div class="priceval" id="price-val">—</div>
+        <div class="sub" id="price-sub"></div>
+        <div class="mini" id="price-spark" style="margin-top:18px"></div>
+        <div class="sub" style="font-size:11.5px;margin-top:4px">last 24 hours</div>
+      </div>
+    </div>
+    <p class="credits wide">
+      Data: <a href="https://bmrs.elexon.co.uk" target="_blank" rel="noopener">Elexon BMRS</a> ·
+      <a href="https://carbonintensity.org.uk" target="_blank" rel="noopener">NESO Carbon Intensity</a> ·
+      <a href="https://www.neso.energy/data-portal" target="_blank" rel="noopener">NESO Data Portal</a> ·
+      <a href="https://www.solar.sheffield.ac.uk/pvlive/" target="_blank" rel="noopener">Sheffield Solar PV_Live</a> ·
+      weather by <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo.com</a> (CC BY 4.0).
+      Contains BMRS data © Elexon Limited copyright and database right <span data-year>2026</span>
+      (<a href="https://www.elexon.co.uk/data/balancing-mechanism-reporting-agent/copyright-licence-bmrs-data/" target="_blank" rel="noopener">licence</a>).
+      Not affiliated with Elexon, NESO, Octopus Energy or Ohme.
+    </p>
+  </section>
+
+  <!-- HOME -->
+  <section class="page" id="home">
+    <div id="home-err" class="wide"></div>
+    <div class="card power">
+      <h2 style="justify-content:center">Using now</h2>
+      <div class="orb" id="orb">
+        <span class="ring"></span><span class="ring"></span><span class="ring"></span>
+        <span class="core"></span>
+        <div class="reading"><div class="big"><span id="power">0</span><small id="power-unit">W</small></div></div>
+      </div>
+      <div class="sub" id="power-age"></div>
+      <div class="rate"><span class="pill" id="rate-pill"></span></div>
+      <div class="costline" id="cost-hour"></div>
+      <div class="sub" id="next-cheap" style="margin-top:4px"></div>
+      <div id="live-spark" style="margin-top:16px"></div>
+      <div class="sub" style="font-size:11.5px">last 15 minutes</div>
+    </div>
+
+    <div class="today">
+      <div class="card" style="--c:var(--elec)">
+        <div class="lbl"><i></i>Electricity today</div>
+        <div class="k"><span id="t-elec">0</span><small>kWh</small></div>
+        <div class="p" id="t-elecp"></div>
+        <div id="t-elec-spark" style="margin-top:10px"></div>
+      </div>
+      <div class="card" style="--c:var(--gasfuel)">
+        <div class="lbl"><i></i>Gas today</div>
+        <div class="k"><span id="t-gas">0</span><small>kWh</small></div>
+        <div class="p" id="t-gasp"></div>
+        <div id="t-gas-spark" style="margin-top:10px"></div>
+      </div>
+    </div>
+
+    <div class="card reveal wide">
+      <h2>Electricity, last 24 hours <span class="aside">W</span></h2>
+      <div class="legend"><span><i style="--c:var(--elec)"></i>Power</span><span><i style="--c:rgba(52,211,153,.45)"></i>Off-peak</span><span><i style="--c:rgba(143,124,255,.6)"></i>Smart charge</span></div>
+      <div id="power-chart"></div>
+    </div>
+
+    <div class="card reveal">
+      <h2>Next 24 hours <span class="aside">Intelligent Octopus Go</span></h2>
+      <div id="slots-home"></div>
+    </div>
+
+    <div class="card reveal">
+      <h2>Last 30 days <span class="toggle" id="days-toggle"><button data-m="kwh">kWh</button><button data-m="gbp">£</button></span></h2>
+      <h3 style="margin-top:0">Electricity</h3>
+      <div id="days-elec"></div>
+      <h3>Gas</h3>
+      <div id="days-gas"></div>
+    </div>
+  </section>
+
+  <!-- CAR -->
+  <section class="page" id="car">
+    <div id="car-main"></div>
+    <div class="card reveal">
+      <h2>Smart charging <span class="aside">from Octopus</span></h2>
+      <div id="slots-car"></div>
+    </div>
+    <div class="card reveal wide">
+      <h2>Charger, last 24 hours <span class="aside">kW</span></h2>
+      <div id="car-chart"><div class="empty">No charger readings yet.</div></div>
+    </div>
+  </section>
+
+  <!-- HISTORY -->
+  <section class="page" id="history">
+    <div class="seg-ctl wide"><span class="thumb"></span>
+      <button data-r="day">Day</button><button data-r="week">Week</button><button data-r="month">Month</button><button data-r="year">Year</button>
+    </div>
+    <div id="hist-err" class="wide"></div>
+    <div id="hist-body" style="display:contents">
+      <div class="section-title wide">Your home <span data-range-label></span></div>
+      <div class="stats two wide" id="h-totals" style="margin:0 0 16px"></div>
+
+      <div class="card reveal">
+        <h2>Electricity <span class="aside"><span data-per></span> <span class="toggle" id="hist-toggle"><button data-m="kwh">kWh</button><button data-m="gbp">£</button></span></span></h2>
+        <div id="h-elec" class="chart"></div>
+      </div>
+      <div class="card reveal">
+        <h2>Gas <span class="aside" data-per></span></h2>
+        <div id="h-gas" class="chart"></div>
+        <h3 class="wx-h"><span><i style="--c:var(--gasfuel)"></i>Outside temperature</span><em>°C</em></h3>
+        <div id="h-temp" class="chart"></div>
+      </div>
+
+      <div class="card reveal wide">
+        <h2>Every half hour <span class="aside">electricity, one row per day</span></h2>
+        <div id="h-heat" class="chart"></div>
+        <div class="scale" id="h-heat-scale"></div>
+      </div>
+
+      <div class="card reveal">
+        <h2>Your typical day <span class="aside">last 60 days · average kW</span></h2>
+        <div class="legend"><span><i style="--c:var(--elec)"></i>Weekdays</span><span><i style="--c:var(--car)"></i>Weekends</span></div>
+        <div id="h-profile" class="chart"></div>
+        <h3>Gas</h3>
+        <div class="legend"><span><i style="--c:var(--gasfuel)"></i>Weekdays</span><span><i style="--c:var(--solar)"></i>Weekends</span></div>
+        <div id="h-profile-gas" class="chart"></div>
+      </div>
+
+      <div class="card reveal">
+        <h2>Car charging <span class="aside" data-range-label></span></h2>
+        <div id="car-hist"></div>
+      </div>
+
+      <div class="section-title wide">The grid <span data-range-label></span></div>
+      <div class="card reveal wide">
+        <h2>Generation mix <span class="aside">GW</span></h2>
+        <div class="legend" id="g-legend"></div>
+        <div id="g-mix" class="chart"></div>
+      </div>
+      <div class="card reveal wide">
+        <h2>Weather across Britain <span class="aside" data-wx-per></span></h2>
+        <h3 class="wx-h" style="margin-top:0"><span><i style="--c:var(--wind)"></i>Wind at turbine height</span><em>mph</em></h3>
+        <div id="hx-wind" class="chart"></div>
+        <h3 class="wx-h"><span><i style="--c:var(--solar)"></i>Sunshine</span><em>W/m²</em></h3>
+        <div id="hx-sun" class="chart"></div>
+        <h3 class="wx-h"><span><i style="--c:var(--gasfuel)"></i>Temperature</span><em>°C</em></h3>
+        <div id="hx-temp" class="chart"></div>
+        <div class="sub" style="margin-top:10px">Wind is the average at 100 m over the main wind-farm areas, sunshine and temperature over the counties with the most solar panels. From Open-Meteo.</div>
+      </div>
+      <div class="card reveal">
+        <h2>Carbon intensity <span class="aside" id="g-carbon-avg"></span></h2>
+        <div id="g-carbon" class="chart"></div>
+      </div>
+      <div class="card reveal">
+        <h2>Wholesale price <span class="aside">£/MWh</span></h2>
+        <div id="g-price" class="chart"></div>
+      </div>
+      <div class="card reveal">
+        <h2>Share of generation</h2>
+        <div id="g-share"></div>
+      </div>
+      <div class="card reveal">
+        <h2>Records <span class="aside">half-hourly</span></h2>
+        <div class="records" id="g-records"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<nav>
+  <button data-tab="grid"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 6 22M12 2l6 20M8.5 12h7M7.3 16.5h9.4M10 7h4"/><path d="M3 7h18"/></svg>Grid</button>
+  <button data-tab="home"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>Home</button>
+  <button data-tab="car"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 17H3v-5l2-5h11l3 5h2v5h-2"/><circle cx="7.5" cy="17" r="2"/><circle cx="16.5" cy="17" r="2"/><path d="M9.5 17h5M5 12h14"/></svg>Car</button>
+  <button data-tab="history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>History</button>
+</nav>
+<script>document.querySelectorAll('[data-year]').forEach((n) => { n.textContent = new Date().getFullYear(); });
+document.getElementById('brand').innerHTML = document.getElementById('logo-tpl').innerHTML + 'Current';</script>
+</body>
+</html>
