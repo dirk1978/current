@@ -699,6 +699,9 @@ function renderCar(force) {
     html: (i) => `<div class="tt">${fmtDay(dayBins[i].t)}</div>${Charts.row(C('--car'), 'Charged', kwh(dayBins[i].kwh) + ' kWh')}${dayBins[i].kwh ? Charts.row('#fff', 'Cost', pounds(dayBins[i].p)) : ''}`,
   });
 
+  // ---- efficiency, from the car's own data (EU Data Act portal)
+  renderCarEfficiency(c);
+
   // ---- charges list
   $('#car-sessions').innerHTML = S.length ? `<div class="sessions">${S.slice(0, 14).map((x) => `
     <div class="sess">
@@ -727,15 +730,60 @@ function renderCar(force) {
   const fact = (k, val) => (val ? `<div><span>${k}</span><b>${val}</b></div>` : '');
   $('#car-facts').innerHTML = [
     fact('Model', [car.make, car.model, car.variant, car.year].filter(Boolean).join(' ')),
+    c.data?.odometerMiles ? fact('Odometer', c.data.odometerMiles.toLocaleString() + ' miles') : '',
+    c.data?.serviceDueDays != null ? fact('Service', c.data.serviceDueDays < 0 ? `<span style="color:var(--warn)">overdue by ${-c.data.serviceDueDays} days</span>` : `due in ${c.data.serviceDueDays} days`) : '',
+    c.data?.batteryTempC != null ? fact('Battery temperature', c.data.batteryTempC + '°C') : '',
     fact('Battery', car.capacityWh ? Math.round(car.capacityWh / 1000) + ' kWh' : null),
     fact('Typical efficiency', miPerKwh ? `${miPerKwh.toFixed(1)} miles/kWh` : null),
     fact('Full charge costs', car.capacityWh && h?.tariff ? `${pounds((car.capacityWh / 1000) * h.tariff.elec.offPeak)} at ${h.tariff.elec.offPeak}p` : null),
     fact('Charging power', car.maxChargeW ? (car.maxChargeW / 1000).toFixed(1) + ' kW max (AC)' : null),
     fact('Charger', [c.device?.model, c.device?.firmware && 'firmware ' + c.device.firmware].filter(Boolean).join(' · ')),
+    c.euda ? fact('Car data (EU Data Act)', c.euda.filesWithData ? `${c.euda.filesWithData} file${c.euda.filesWithData === 1 ? '' : 's'} with data` :
+      c.euda.filesStored ? `${c.euda.filesStored} deliver${c.euda.filesStored === 1 ? 'y' : 'ies'} so far, no data in them yet` :
+      c.euda.request ? `“${c.euda.request.name}”: waiting for the first delivery` : (c.euda.error || 'checking…')) : '',
   ].join('');
 
   if (h?.tariff) renderSlots(h, h.tariff);
   reveal();
+}
+
+function renderCarEfficiency(c) {
+  const d = c.data;
+  $('#car-eff-card').hidden = !d;
+  if (!d) return;
+  const eff = d.efficiency || {};
+  // a petrol car for comparison: 45 mpg at 140p a litre (4.546 litres per gallon)
+  const petrolPpm = (140 * 4.546) / 45;
+  $('#car-eff-src').textContent = `from the car · updated ${fmtTime(d.updated)}`;
+  $('#car-eff-stats').innerHTML = `
+    <div class="stat"><b>${eff.last30 ?? '—'}<small>mi/kWh</small></b><span>Last 30 days · ${eff.year ?? '—'} over the year</span></div>
+    <div class="stat"><b>${d.penceMile30 != null ? d.penceMile30 + '<small>p/mile</small>' : '—'}</b><span>${d.penceMile30 ? `Home charging · a petrol car ≈ ${Math.round(petrolPpm)}p` : 'Cost per mile'}</span></div>
+    <div class="stat"><b>${d.miles30.toLocaleString()}<small>miles</small></b><span>Last 30 days · ${d.trips30} trips</span></div>`;
+  const m = d.monthly.filter((x) => x.miPerKwh);
+  const fmtMonth = (t) => new Date(t).toLocaleDateString('en-GB', { month: 'short', year: '2-digit', timeZone: 'UTC' });
+  Charts.bars($('#car-eff-months'), {
+    t: m.map((x) => x.t), values: m.map((x) => x.miPerKwh), color: C('--car'), height: 150, maxBar: 26,
+    xTicks: m.map((x, i) => [i + 0.5, i % 2 === m.length % 2 ? fmtMonth(x.t) : null]).filter((x) => x[1]), yFmt: (v) => v,
+    avg: eff.year, avgLabel: `year ${eff.year}`,
+    html: (i) => `<div class="tt">${new Date(m[i].t).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
+      ${Charts.row(C('--car'), 'Efficiency', m[i].miPerKwh + ' mi/kWh')}${Charts.row('#fff', 'Driven', m[i].miles.toLocaleString() + ' miles')}${m[i].tempC != null ? Charts.row(C('--gasfuel'), 'Average outside', m[i].tempC + '°C') : ''}`,
+  });
+  const b = d.byTemp;
+  Charts.bars($('#car-eff-temp'), {
+    t: b.map((x) => x.fromC), values: b.map((x) => x.miPerKwh), height: 140, maxBar: 30,
+    // colour runs cold blue to warm orange so the trend reads at a glance; the value is always in the tooltip
+    colorAt: (i) => `color-mix(in oklab, ${C('--hydro')} ${Math.round(100 - (i / Math.max(1, b.length - 1)) * 100)}%, ${C('--gasfuel')})`,
+    xTicks: b.map((x, i) => [i + 0.5, `${x.fromC}°`]), yFmt: (v) => v,
+    html: (i) => `<div class="tt">${b[i].fromC}–${b[i].toC}°C outside</div>${Charts.row(C('--car'), 'Efficiency', b[i].miPerKwh + ' mi/kWh')}${Charts.row('#fff', 'Trips', b[i].trips)}`,
+  });
+  $('#car-trips').innerHTML = `<div class="sessions">${d.recentTrips.slice(0, 8).map((x) => `
+    <div class="sess trip">
+      <div class="when"><b>${fmtDay(x.end)}</b><span>ended ${fmtTime(x.end)}${x.tempC != null ? ` · ${Math.round(x.tempC)}°C` : ''}</span></div>
+      <div class="num"><b>${x.miles}</b><span>miles</span></div>
+      <div class="num"><b>${x.kwh ?? '–'}</b><span>kWh</span></div>
+      <div class="num"><b>${x.kwh ? (x.miles / x.kwh).toFixed(1) : '–'}</b><span>mi/kWh</span></div>
+    </div>`).join('')}</div>
+    <p class="sub" style="font-size:12px;margin:10px 0 0">Energy is the battery used while driving (battery % before and after, with a ${d.usableKwh} kWh usable battery), so it leaves out standby and charging losses. Short trips are rough: the car reports whole percent.</p>`;
 }
 
 // ---------- HISTORY ----------

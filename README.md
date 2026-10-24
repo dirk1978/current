@@ -44,6 +44,13 @@ yourself, with a web page and an Android app with a home-screen widget.
 - Your electricity split into house and car, live and in the history
 - Add a photo of your car as `data/car-photo.jpg` to show it at the top of the Car screen, or set `CAR_COLOUR` for
   the drawing
+- With a VW Group car (CUPRA, SEAT, VW, Skoda, Audi): its own data through the **EU Data Act portal** — miles per
+  kWh month by month and against the outside temperature, pence per mile, trips, odometer, service due. Sign in at
+  [eu-data-act.drivesomethinggreater.com](https://eu-data-act.drivesomethinggreater.com) with the car's account, set
+  up a continuous data request (all clusters, every 15 minutes), and set `CUPRA_EMAIL` / `CUPRA_PASSWORD`. Current
+  then collects the files every 15 minutes. A one-off "full" request gives a year of history: if it's large, import
+  it with `node --max-old-space-size=4096 tools/euda-import.mjs`. (VW Group's app API itself is closed to
+  third-party tools since June 2026.)
 
 ![A year of the grid](docs/history-year-mix.png)
 
@@ -118,6 +125,8 @@ All in `.env` (see [`.env.example`](.env.example)) or as environment variables:
 | `OCTOPUS_GAS_UNITS` | `kWh` for older SMETS1 gas meters (most report m³) |
 | `OHME_EMAIL`, `OHME_PASSWORD` | Your Ohme app login |
 | `CAR_COLOUR` | Colour for the drawn car, e.g. `#4b5a52` (a photo in `data/car-photo.jpg` replaces it) |
+| `CUPRA_EMAIL`, `CUPRA_PASSWORD` | Your CUPRA/VW Group ID, for the EU Data Act portal |
+| `CAR_USABLE_KWH` | Usable battery (kWh), to turn the car's battery % into energy |
 | `PUBLIC_URL`, `LAN_URL` | Where phones should find the server (internet, then home network) |
 
 ## How it works

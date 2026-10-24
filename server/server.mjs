@@ -11,6 +11,8 @@ import { startWeather, weatherSeries } from './weather.mjs';
 import { createOctopus } from './octopus.mjs';
 import { createOhme } from './ohme.mjs';
 import { carSessions, splitBuckets, carToday } from './car.mjs';
+import { createEuda } from './euda.mjs';
+import { ingestDir, carDataSummary } from './cardata.mjs';
 
 const env = loadEnv();
 const PORT = Number(env.PORT || 8092);
@@ -35,6 +37,23 @@ const octopus = createOctopus(env);
 octopus?.start();
 const ohme = createOhme(env);
 ohme?.start();
+// The car's own data through the EU Data Act portal (CUPRA/VW Group cars, optional, experimental)
+const euda = createEuda(env);
+euda?.start();
+// read new car data files into the database as they arrive (big one-off files: tools/euda-import.mjs)
+if (euda) setInterval(() => { try { ingestDir(euda.dir); } catch (e) { log('cardata:', e.message); } }, 5 * 60e3);
+// usable battery for turning battery % into kWh: CAR_USABLE_KWH, else what Ohme knows about the car
+const usableKwh = () => Number(env.CAR_USABLE_KWH) || ((ohme?.snapshot().car?.capacityWh || 0) / 1000) || 60;
+// the car's own data, cached for a minute (the trip analysis reads a year of readings)
+let cdCache = null, cdAt = 0;
+function carData(sessions) {
+  if (Date.now() - cdAt > 60e3) {
+    const cost30 = (sessions || []).reduce((a, x) => a + x.pence, 0);
+    try { cdCache = carDataSummary({ usableKwh: usableKwh(), chargeCost: cost30 || null }); } catch (e) { log('cardata:', e.message); cdCache = null; }
+    cdAt = Date.now();
+  }
+  return cdCache;
+}
 // Intelligent Octopus Go bills smart-charge slots at the cheap rate; Ohme's history shows where they were
 if (octopus && ohme) octopus.setCheapHint((t, rate) => ohme.chargedCheapAt(t, rate));
 
@@ -104,7 +123,11 @@ http.createServer(async (req, res) => {
         grid: gridSnapshot(),
         weather: weatherSeries(Date.now() - 24 * 3600e3, Date.now() + 24 * 3600e3),
         home: homeNow(),
-        car: ohme ? { ...ohme.snapshot(), paint: env.CAR_COLOUR || null, photo: carPhoto() ? fs.statSync(carPhoto()).mtimeMs : null, sessions: carSessions(ohme, octopus, Date.now() - 30 * 86400e3) } : { error: 'not configured' },
+        car: ohme ? (() => {
+          const sessions = carSessions(ohme, octopus, Date.now() - 30 * 86400e3);
+          return { ...ohme.snapshot(), euda: euda?.status() || null, data: carData(sessions), paint: env.CAR_COLOUR || null,
+            photo: carPhoto() ? fs.statSync(carPhoto()).mtimeMs : null, sessions };
+        })() : { error: 'not configured' },
       });
     }
     // For the Connect phone QR code: the addresses the app should use (internet first, then home network)
