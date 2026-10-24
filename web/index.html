@@ -11,6 +11,7 @@
 <script src="config.js"></script>
 <script src="vendor/qrcode.js" defer></script>
 <script src="charts.js" defer></script>
+<script src="car.svg.js" defer></script>
 <script src="app.js" defer></script>
 </head>
 <body>
@@ -166,14 +167,43 @@
 
   <!-- CAR -->
   <section class="page" id="car">
-    <div id="car-main"></div>
+    <div id="car-err" class="wide"></div>
+    <div class="card car-hero wide" id="car-hero"></div>
+
+    <div class="card reveal" id="car-controls-card">
+      <h2>Charging <span class="aside" id="car-schedule-name"></span></h2>
+      <div id="car-controls"></div>
+    </div>
+
+    <div class="card reveal" id="car-session-card">
+      <h2>This charge <span class="aside" id="car-session-when"></span></h2>
+      <div id="car-session"></div>
+    </div>
+
     <div class="card reveal">
       <h2>Smart charging <span class="aside">from Octopus</span></h2>
       <div id="slots-car"></div>
     </div>
+
+    <div class="card reveal">
+      <h2>Last 30 days <span class="aside">charging</span></h2>
+      <div class="stats two" id="car-month"></div>
+      <div id="car-days" style="margin-top:14px"></div>
+    </div>
+
+    <div class="card reveal wide">
+      <h2>Charges <span class="aside">cost from your Octopus rates · grid carbon at the time</span></h2>
+      <div id="car-sessions"></div>
+    </div>
+
     <div class="card reveal wide">
       <h2>Charger, last 24 hours <span class="aside">kW</span></h2>
       <div id="car-chart"><div class="empty">No charger readings yet.</div></div>
+    </div>
+
+    <div class="card reveal">
+      <h2>The car</h2>
+      <div class="facts" id="car-facts"></div>
     </div>
   </section>
 
@@ -189,6 +219,7 @@
 
       <div class="card reveal">
         <h2>Electricity <span class="aside"><span data-per></span> <span class="toggle" id="hist-toggle"><button data-m="kwh">kWh</button><button data-m="gbp">£</button></span></span></h2>
+        <div class="legend" id="h-elec-legend"></div>
         <div id="h-elec" class="chart"></div>
       </div>
       <div class="card reveal">

@@ -14,7 +14,7 @@ export function loadEnv() {
       if (m) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
     }
   } catch { /* no .env: settings can come from the environment instead (e.g. Docker) */ }
-  const ours = /^(OCTOPUS_|OHME_|ACCESS_TOKEN$|PORT$|PUBLIC_URL$|LAN_URL$)/;
+  const ours = /^(OCTOPUS_|OHME_|CUPRA_|CAR_|ACCESS_TOKEN$|PORT$|PUBLIC_URL$|LAN_URL$)/;
   return { ...env, ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k in env || ours.test(k))) };
 }
 

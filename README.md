@@ -36,8 +36,14 @@ yourself, with a web page and an Android app with a home-screen widget.
   without a Home Mini (without one, half-hourly data arrives about a day late and there's no live power)
 
 **Your car** (with an Ohme charger)
-- Charging status, power, battery level, target and the planned charge slots
-- Charging history: energy, cost, money saved and CO₂ saved
+- Battery level and range, charging status and power, the target and ready-by time, the planned charge slots
+- Controls: charge now at full power, pause, resume, approve, and change the target % and time (each asks first)
+- This charge: battery before and now, energy added, cost, price per kWh, share at the cheap rate, carbon
+- Every charge for the last 30 days, priced from your Octopus rates (including Intelligent Octopus Go's smart-charge
+  slots) with the grid's carbon intensity at the time
+- Your electricity split into house and car, live and in the history
+- Add a photo of your car as `data/car-photo.jpg` to show it at the top of the Car screen, or set `CAR_COLOUR` for
+  the drawing
 
 ![A year of the grid](docs/history-year-mix.png)
 
@@ -111,6 +117,7 @@ All in `.env` (see [`.env.example`](.env.example)) or as environment variables:
 | `OCTOPUS_ACCOUNT` | Only needed if your key sees more than one account |
 | `OCTOPUS_GAS_UNITS` | `kWh` for older SMETS1 gas meters (most report m³) |
 | `OHME_EMAIL`, `OHME_PASSWORD` | Your Ohme app login |
+| `CAR_COLOUR` | Colour for the drawn car, e.g. `#4b5a52` (a photo in `data/car-photo.jpg` replaces it) |
 | `PUBLIC_URL`, `LAN_URL` | Where phones should find the server (internet, then home network) |
 
 ## How it works

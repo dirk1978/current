@@ -265,18 +265,26 @@ const Charts = {
     const slot = f.iw / n;
     const bw = Math.max(1.5, Math.min(o.maxBar || 22, slot - 2)); // 2px gap between bars
     const grp = el('g', {}, f.svg);
-    o.values.forEach((v, i) => {
-      if (!v) return;
-      const x = f.pad.l + i * slot + (slot - bw) / 2;
-      const y = f.Y(v), h = f.Y(0) - y;
-      const r = Math.min(4, bw / 2, h);
-      // rounded top only, anchored to the baseline
-      const d = `M${x},${f.Y(0)}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${f.Y(0)}Z`;
-      const p = el('path', { d, fill: o.colorAt ? o.colorAt(i) : o.color, opacity: o.faded?.(i) ? 0.45 : 1 }, grp);
+    // a bar segment from value lo to hi; only the top segment of a stack gets rounded corners
+    const seg = (x, lo, hi, round, fill, i) => {
+      const yb = f.Y(lo), y = f.Y(hi), h = yb - y;
+      if (h <= 0.5) return;
+      const r = round ? Math.min(4, bw / 2, h) : 0;
+      const d = `M${x},${yb}V${y + r}Q${x},${y} ${x + r},${y}H${x + bw - r}Q${x + bw},${y} ${x + bw},${y + r}V${yb}Z`;
+      const p = el('path', { d, fill, opacity: o.faded?.(i) ? 0.45 : 1 }, grp);
       p.style.transformOrigin = `0 ${f.Y(0)}px`;
       p.style.transform = 'scaleY(0)';
       p.style.transition = `transform .9s cubic-bezier(.2,.9,.25,1.05) ${Math.min(i * 12, 500)}ms`;
       requestAnimationFrame(() => requestAnimationFrame(() => { p.style.transform = 'scaleY(1)'; }));
+    };
+    const gap = (f.Y(0) - f.Y(yMax)) ? 2 * (yMax / (f.Y(0) - f.Y(yMax))) : 0; // 2px in data units
+    o.values.forEach((v, i) => {
+      if (!v) return;
+      const x = f.pad.l + i * slot + (slot - bw) / 2;
+      // o.under: an optional lower segment of each bar (e.g. the car's share of the electricity), in o.underColor
+      const u = Math.min(v, o.under?.[i] || 0);
+      if (u > 0) seg(x, 0, u, v - u <= gap, o.underColor, i);
+      if (v - u > gap || !u) seg(x, u ? u + gap : 0, v, true, o.colorAt ? o.colorAt(i) : o.color, i);
     });
     if (o.avg) {
       el('line', { x1: f.pad.l, x2: f.W - f.pad.r, y1: f.Y(o.avg), y2: f.Y(o.avg), stroke: cssVar('--ink-2'), 'stroke-dasharray': '2 4', 'stroke-width': 1 }, f.svg);

@@ -196,10 +196,24 @@ export function createOctopus(env) {
       completedDispatches(accountNumber:$a){start end delta}}`, { a: account });
     const map = (x) => ({ start: Date.parse(x.start), end: Date.parse(x.end), kwh: -Number(x.delta), source: x.meta?.source });
     s.dispatches = { planned: d.plannedDispatches.map(map), completed: d.completedDispatches.map(map) };
+    // Octopus only reports the last few days of slots, so keep them all for pricing history correctly later
+    const keep = db.prepare('INSERT OR IGNORE INTO dispatch (start, end, kwh) VALUES (?, ?, ?)');
+    for (const x of s.dispatches.completed) keep.run(x.start, x.end, x.kwh);
+    pastSlots = null;
   }
 
   // Intelligent Octopus Go also charges the cheap rate in any smart-charge slot outside the night window.
-  const inDispatch = (t) => [...s.dispatches.completed, ...s.dispatches.planned].some((d) => t >= d.start && t < d.end);
+  // Slots come from Octopus (recent ones, and every one seen since), plus a hint from elsewhere for older
+  // history (the server passes "Ohme charged this hour at the cheap rate").
+  db.exec('CREATE TABLE IF NOT EXISTS dispatch (start INTEGER PRIMARY KEY, end INTEGER, kwh REAL)');
+  let pastSlots = null;
+  let cheapHint = null;
+  const inDispatch = (t) => {
+    if ([...s.dispatches.completed, ...s.dispatches.planned].some((d) => t >= d.start && t < d.end)) return true;
+    pastSlots ??= db.prepare('SELECT start, end FROM dispatch').all();
+    if (pastSlots.some((d) => t >= d.start && t < d.end)) return true;
+    return !!cheapHint?.(t, s.info.elec.offPeak);
+  };
   function inWindow(t) {
     const w = s.info.window;
     if (!w) return false;
@@ -242,6 +256,12 @@ export function createOctopus(env) {
 
   return {
     get ready() { return !!s.info; },
+    // for the car: the unit rate and whether it's the cheap rate at a moment, and electricity use per half hour
+    rateAt: (t) => (s.info ? elecRate(t) : null),
+    offPeakAt: (t) => (s.info ? isOffPeak(t) : false),
+    cheapRate: () => (s.info ? s.info.elec.offPeak : null),
+    setCheapHint(fn) { cheapHint = fn; },
+    elecHalfHours: (from, to) => db.prepare("SELECT t, kwh FROM usage WHERE fuel = 'elec' AND t >= ? AND t < ? ORDER BY t").all(from, to),
     touch() { s.lastViewed = Date.now(); },
     start() {
       every('octopus', 60e3, async () => {

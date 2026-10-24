@@ -382,14 +382,15 @@ function renderHome(force) {
   const rate = tf.rateNow;
   $('#rate-pill').style.setProperty('--c', tf.offPeakNow ? C('--good') : C('--elec'));
   $('#rate-pill').innerHTML = (tf.offPeakNow ? ICON.moon : ICON.sun) + (tf.offPeakNow ? 'Off-peak' : 'Peak') + ` · ${rate.toFixed(rate % 1 ? 2 : 0)}p`;
-  $('#cost-hour').innerHTML = `Costing <b>${pence((w / 1000) * rate)}</b> an hour at this rate`;
+  $('#cost-hour').innerHTML = `Costing <b>${pence((w / 1000) * rate)}</b> an hour at this rate` +
+    (live?.carW > 0 ? `<div class="sub" style="margin-top:4px">House <b style="color:var(--ink)">${kw(live.houseW)} ${kwUnit(live.houseW)}</b> · car <b style="color:var(--car)">${kw(live.carW)} ${kwUnit(live.carW)}</b></div>` : '');
   $('#next-cheap').textContent = tf.intelligent ? nextRateChange(tf) : '';
 
   // Today
   const t = h.today;
   countTo($('#t-elec'), t.elec, (v) => kwh(v));
   countTo($('#t-gas'), t.gas, (v) => kwh(v));
-  $('#t-elecp').textContent = pounds(t.elecP) + ' so far';
+  $('#t-elecp').textContent = pounds(t.elecP) + ' so far' + (t.car > 0.1 ? ` · car ${kwh(t.car)} kWh` : '');
   $('#t-gasp').textContent = pounds(t.gasP) + ' so far';
   const dayStart = t.t;
   const hhE = Array(48).fill(0), hhG = Array(48).fill(0);
@@ -507,46 +508,208 @@ function renderSlots(h, tf) {
 }
 
 // ---------- CAR ----------
+const miles = (km) => Math.round(km * 0.621371);
+const hhmm = (sec) => (sec == null ? null : `${String(Math.floor(sec / 3600)).padStart(2, '0')}:${String(Math.floor((sec % 3600) / 60)).padStart(2, '0')}`);
+const CAR_STATUS = {
+  charging: ['Charging', '--car'], plugged: ['Plugged in', '--elec'], paused: ['Paused', '--warn'], finished: ['Charged', '--good'],
+  unplugged: ['Unplugged', '--ink-3'], pending: ['Waiting for approval', '--warn'], unknown: ['—', '--ink-3'],
+};
+
+async function apiPost(path, body) {
+  let r, err;
+  for (const base of [cfg.base, ...cfg.bases.filter((b) => b !== cfg.base)]) {
+    try {
+      r = await fetch(base + path, { method: 'POST', headers: { Authorization: 'Bearer ' + cfg.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(30000) });
+      break;
+    } catch (e) { err = e; r = null; }
+  }
+  if (!r) throw err;
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Server said ' + r.status);
+  return j;
+}
+
+// A small confirm sheet; resolves true/false
+function confirmSheet(title, text, okLabel = 'Yes, do it') {
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.className = 'sheet';
+    box.innerHTML = `<div class="card sheet-card"><h2>${title}</h2><p class="sub" style="font-size:14px;margin:0 0 16px">${text}</p>
+      <div class="btn-row"><button class="btn ghost" data-a="no">Cancel</button><button class="btn primary" data-a="yes">${okLabel}</button></div></div>`;
+    document.body.appendChild(box);
+    box.addEventListener('click', (e) => {
+      const a = e.target.closest('[data-a]')?.dataset.a;
+      if (e.target === box || a) { box.remove(); resolve(a === 'yes'); }
+    });
+  });
+}
+function toast(msg, bad) {
+  const t = document.createElement('div');
+  t.className = 'toast' + (bad ? ' bad' : '');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('on'));
+  setTimeout(() => { t.classList.remove('on'); setTimeout(() => t.remove(), 400); }, 3200);
+}
+async function carCommand(action, args, question, detail) {
+  if (!(await confirmSheet(question, detail))) return;
+  try {
+    await apiPost('/api/control', { target: 'ohme', action, args });
+    window.Android?.haptic?.();
+    toast('Done. The charger can take a minute to respond.');
+    setTimeout(() => refresh().then(() => renderCar(true)), 2500);
+  } catch (e) { toast('Ohme said: ' + e.message, true); }
+}
+
 function renderCar(force) {
   const c = data.car;
   const h = data.home;
-  const box = $('#car-main');
   if (!c || c.error) {
-    box.innerHTML = `<div class="card hero"><div class="empty"><b>Ohme charger not connected yet</b>Add your Ohme login to <code>.env</code> on the server to see the charger and car here. Octopus's smart-charge plan is below.</div></div>`;
+    $('#car-hero').innerHTML = `<div class="empty"><b>Ohme charger not connected yet</b>Add your Ohme login to <code>.env</code> on the server to see the charger and car here. Octopus's smart-charge plan is below.</div>`;
+    ['#car-controls-card', '#car-session-card'].forEach((s) => { $(s).hidden = true; });
     if (h?.tariff) renderSlots(h, h.tariff);
     return;
   }
   const fresh = force || c.updated !== lastCarT;
   lastCarT = c.updated;
   if (!fresh) return;
-  const label = { charging: 'Charging', plugged: 'Plugged in', paused: 'Paused', finished: 'Charge complete', unplugged: 'Unplugged', pending: 'Waiting for approval', unknown: '—' }[c.status];
-  const col = { charging: '--car', plugged: '--elec', finished: '--good', paused: '--warn', pending: '--warn' }[c.status] || '--ink-3';
+  ['#car-controls-card', '#car-session-card'].forEach((s) => { $(s).hidden = false; });
+  const [label, col] = CAR_STATUS[c.status] || CAR_STATUS.unknown;
   const soc = c.soc;
-  const target = c.target?.percent;
-  const tt = c.target?.time != null ? `${String(Math.floor(c.target.time / 3600)).padStart(2, '0')}:${String(Math.floor((c.target.time % 3600) / 60)).padStart(2, '0')}` : null;
-  box.innerHTML = `
-    <div class="card hero" style="text-align:center">
-      <div class="battery" id="battery"></div>
-      <span class="pill" style="--c:var(${col})">${c.status === 'charging' ? ICON.bolt : ICON.plug}${label}</span>
-      <div class="stats">
-        <div class="stat"><b>${(c.watts / 1000).toFixed(1)}<small>kW</small></b><span>Power now</span></div>
-        <div class="stat"><b>${c.sessionKwh.toFixed(1)}<small>kWh</small></b><span>This session</span></div>
-        <div class="stat"><b>${target != null ? target + '<small>%</small>' : '—'}</b><span>${tt ? 'Target by ' + tt : 'Target'}</span></div>
-      </div>
-      <div class="sub" style="margin-top:12px">${[c.device?.car, c.device?.model].filter(Boolean).join(' · ')}${c.online ? '' : ' · charger offline'}</div>
-    </div>`;
-  // Battery ring
-  const host = $('#battery');
-  const pct = soc ?? (c.status === 'finished' ? 100 : null);
-  Charts.donut(host, pct == null ? [] : [{ key: 'soc', color: C(col), value: pct }, { key: 'rest', color: 'rgba(255,255,255,0)', value: 100 - pct }], { r: 120, width: 16 });
-  const centre = document.createElement('div');
-  centre.className = 'ringcentre';
-  centre.innerHTML = pct != null
-    ? `<div class="big"><span id="soc">0</span><small>%</small></div><div class="unit">BATTERY</div>`
-    : `<div class="big" style="font-size:54px">${(c.watts / 1000).toFixed(1)}<small>kW</small></div><div class="unit">CHARGER</div>`;
-  host.appendChild(centre);
-  if (pct != null) countTo($('#soc'), pct, (v) => Math.round(v), 1300);
+  const sch = c.schedule;
+  const target = sch?.percent ?? c.target?.percent;
+  const before = c.session?.socBefore;
+  const readyBy = sch?.time || hhmm(c.target?.time);
+  const charging = c.status === 'charging';
+  const plugged = !['unplugged', 'unknown'].includes(c.status);
 
+  // ---- hero
+  $('#car-hero').innerHTML = `
+    <div class="car-head">
+      <div>
+        <div class="car-name">${c.car ? [c.car.make, c.car.model, c.car.variant].filter(Boolean).join(' ') : c.device?.car || 'Your car'}</div>
+        <span class="pill" style="--c:var(${col})">${charging ? ICON.bolt : ICON.plug}${label}${charging ? ` · ${(c.watts / 1000).toFixed(1)} kW` : ''}</span>
+      </div>
+      <div class="car-soc">
+        <div class="big"><span id="car-soc">0</span><small>%</small></div>
+        <div class="unit">${c.rangeKm != null ? `≈ ${miles(c.rangeKm)} MILES` : 'BATTERY'}</div>
+      </div>
+    </div>
+    <div class="car-stage ${charging ? 'charging' : ''} ${c.photo ? 'photo' : ''}">${c.photo
+      ? `<img src="${cfg.base}/api/car-photo?key=${encodeURIComponent(cfg.key)}&v=${Math.round(c.photo)}" alt="The car">`
+      : window.carSvg({ paint: c.paint || '#7a8594', accent: '#c8875a', charging, plugged })}</div>
+    <div class="soc-bar" aria-label="Battery ${soc ?? '?'}%">
+      ${before != null && plugged ? `<i class="before" style="width:${before}%"></i>` : ''}
+      <i class="now ${charging ? 'live' : ''}" style="width:0%" data-w="${soc ?? 0}"></i>
+      ${target != null ? `<span class="target" style="left:${target}%"><em>${target}%</em></span>` : ''}
+    </div>
+    <div class="soc-legend">
+      <span>${before != null && plugged ? `Started at ${before}%` : ''}</span>
+      <span>${target != null ? `Target ${target}%${readyBy ? ' by ' + readyBy : ''}` : ''}</span>
+    </div>
+    <div class="sub" style="margin-top:8px">${c.socSource === 'EXTRAPOLATION' ? 'Battery level estimated by Ohme from the energy delivered. ' : ''}${c.online ? '' : 'The charger is offline. '}</div>`;
+  if (soc != null) countTo($('#car-soc'), soc, (v) => Math.round(v), 1300);
+  requestAnimationFrame(() => requestAnimationFrame(() => { const b = $('.soc-bar .now'); if (b) b.style.width = b.dataset.w + '%'; }));
+
+  // ---- controls
+  const maxOn = sch?.maxCharge;
+  const buttons = [];
+  if (c.status === 'pending') buttons.push(`<button class="btn primary" data-cmd="approve">${ICON.bolt}Approve charge</button>`);
+  if (plugged && c.status !== 'pending') {
+    buttons.push(`<button class="btn ${maxOn ? 'on' : ''}" data-cmd="max">${ICON.bolt}${maxOn ? 'Max charge is on' : 'Charge now at full power'}</button>`);
+    if (c.status === 'paused') buttons.push(`<button class="btn" data-cmd="resume">▶ Resume</button>`);
+    else if (c.status !== 'finished') buttons.push(`<button class="btn" data-cmd="pause">❚❚ Pause</button>`);
+  }
+  $('#car-schedule-name').textContent = sch?.name ? `schedule: ${sch.name}` : '';
+  $('#car-controls').innerHTML = `
+    ${buttons.length ? `<div class="btn-row">${buttons.join('')}</div>` : `<p class="sub" style="margin:0 0 12px">Plug the car in to charge${sch ? `. Next: ${sch.percent}% by ${sch.time}` : ''}.</p>`}
+    ${sch ? `<div class="target-edit">
+      <label>Charge to <b id="tg-val">${target}%</b><input type="range" id="tg-pct" min="30" max="100" step="5" value="${target}"></label>
+      <label>Ready by <input type="time" id="tg-time" value="${readyBy || '07:00'}"></label>
+      <button class="btn primary" id="tg-save" disabled>Save</button>
+    </div>
+    <p class="sub" style="font-size:12px;margin:10px 0 0">${sch.days?.length ? 'This schedule runs on ' + sch.days.map((d) => d[0] + d.slice(1, 3).toLowerCase()).join(', ') + '. ' : ''}With Intelligent Octopus Go, Octopus picks the cheapest times to reach it.</p>` : ''}`;
+  $$('#car-controls [data-cmd]').forEach((b) => b.addEventListener('click', () => {
+    const cmd = b.dataset.cmd;
+    if (cmd === 'max') carCommand('max', { on: !maxOn }, maxOn ? 'Back to smart charging?' : 'Charge now at full power?',
+      maxOn ? 'The charger goes back to the smart schedule and the cheapest times.' : 'The car charges straight away at full power, whatever the rate. On Intelligent Octopus Go that can mean paying the peak rate.');
+    if (cmd === 'pause') carCommand('pause', {}, 'Pause charging?', 'The car stops charging until you resume it.');
+    if (cmd === 'resume') carCommand('resume', {}, 'Resume charging?', 'The car carries on charging on its schedule.');
+    if (cmd === 'approve') carCommand('approve', {}, 'Approve this charge?', 'The charger starts the session it is waiting on.');
+  }));
+  if (sch) {
+    const pct = $('#tg-pct'), time = $('#tg-time'), save = $('#tg-save');
+    const changed = () => { $('#tg-val').textContent = pct.value + '%'; save.disabled = Number(pct.value) === target && time.value === readyBy; };
+    pct.addEventListener('input', changed); time.addEventListener('input', changed);
+    save.addEventListener('click', () => carCommand('target', { percent: Number(pct.value), time: time.value },
+      `Charge to ${pct.value}% by ${time.value}?`, `This changes the "${sch.name}" schedule in Ohme.`, 'Save'));
+  }
+
+  // ---- this charge
+  const ss = c.session;
+  if (ss?.start) {
+    const billed = (c.sessions || []).find((x) => Math.abs(x.start - ss.start) < 3 * 3600e3);
+    const pence = billed?.pence ?? ss.pence;
+    const kwhNow = ss.kwh;
+    $('#car-session-when').textContent = `started ${fmtDT(ss.start)}`;
+    $('#car-session').innerHTML = `
+      <div class="charge-line"><b>${ss.socBefore ?? '?'}%</b><span class="arrow">→</span><b>${soc ?? '?'}%</b><span class="sub">+${kwh(kwhNow)} kWh${ss.rangeAddedKm ? ` · +${miles(ss.rangeAddedKm)} miles` : ''}</span></div>
+      <div class="stats">
+        <div class="stat"><b>${pence != null ? pounds(pence) : '—'}</b><span>${billed ? 'At your rates' : 'Ohme’s estimate'}</span></div>
+        <div class="stat"><b>${pence != null && kwhNow ? (pence / kwhNow).toFixed(1) : '—'}<small>p/kWh</small></b><span>${billed?.cheapPct != null ? billed.cheapPct + '% at the cheap rate' : 'Average'}</span></div>
+        <div class="stat"><b>${billed?.gPerKwh ?? ss.gPerKwh ?? '—'}<small>g/kWh</small></b><span>${billed?.co2Kg != null ? billed.co2Kg.toFixed(1) + ' kg CO₂' : ss.co2g != null ? (ss.co2g / 1000).toFixed(1) + ' kg CO₂' : 'Grid carbon'}</span></div>
+      </div>
+      ${ss.co2SavedVsPetrolG ? `<p class="sub" style="margin:12px 0 0">About <b style="color:var(--ink)">${(ss.co2SavedVsPetrolG / 1000).toFixed(1)} kg</b> less CO₂ than driving the same distance in a petrol car (Ohme’s figure).</p>` : ''}
+      <div id="car-session-graph" style="margin-top:14px"></div>`;
+    if (ss.graph?.length > 1) {
+      const g = ss.graph;
+      const bands = (c.slots || []).map((sl) => [sl.start, sl.end, 'rgba(143,124,255,.13)']);
+      Charts.lines($('#car-session-graph'), {
+        t: g.map((p) => p[0]), height: 150, series: [{ name: 'Energy added', color: C('--car'), values: g.map((p) => p[1] / 1000), area: true, width: 2 }],
+        bands, yFmt: (v) => v, xTicks: hourTicks(g[0][0], g[g.length - 1][0], 2), tFmt: fmtTime, vFmt: (v) => kwh(v) + ' kWh added',
+      });
+    }
+  } else {
+    $('#car-session-when').textContent = '';
+    $('#car-session').innerHTML = `<div class="empty">No charge in progress.${c.sessions?.[0] ? ` The last one was ${fmtDay(c.sessions[0].start)}: ${kwh(c.sessions[0].kwh)} kWh for ${pounds(c.sessions[0].pence)}.` : ''}</div>`;
+  }
+
+  // ---- last 30 days
+  const S = c.sessions || [];
+  const tot = S.reduce((a, x) => ({ kwh: a.kwh + x.kwh, p: a.p + x.pence, co2: a.co2 + (x.co2Kg || 0), cheap: a.cheap + (x.kwh * (x.cheapPct || 0)) / 100 }), { kwh: 0, p: 0, co2: 0, cheap: 0 });
+  $('#car-month').innerHTML = `
+    <div class="stat"><b>${kwh(tot.kwh)}<small>kWh</small></b><span>${S.length} charge${S.length === 1 ? '' : 's'}</span></div>
+    <div class="stat"><b>${pounds(tot.p)}</b><span>${tot.kwh ? (tot.p / tot.kwh).toFixed(1) + 'p per kWh' : ''}</span></div>
+    <div class="stat"><b>${tot.kwh ? Math.round((tot.cheap / tot.kwh) * 100) : 0}<small>%</small></b><span>At the cheap rate</span></div>
+    <div class="stat"><b>${tot.co2.toFixed(1)}<small>kg</small></b><span>CO₂ · ${tot.kwh ? Math.round((tot.co2 * 1000) / tot.kwh) : 0} g/kWh</span></div>`;
+  const dayBins = [];
+  const t0 = new Date(Date.now() - 29 * 86400e3);
+  for (let i = 0; i < 30; i++) {
+    const d0 = new Date(t0.getTime() + i * 86400e3); d0.setHours(0, 0, 0, 0);
+    dayBins.push({ t: d0.getTime(), kwh: 0, p: 0 });
+  }
+  for (const x of S) {
+    const d = new Date(x.start); d.setHours(0, 0, 0, 0);
+    const bin = dayBins.find((b) => b.t === d.getTime());
+    if (bin) { bin.kwh += x.kwh; bin.p += x.pence; }
+  }
+  Charts.bars($('#car-days'), {
+    t: dayBins.map((b) => b.t), values: dayBins.map((b) => b.kwh), color: C('--car'), height: 120,
+    xTicks: dayBins.map((b, i) => [i + 0.5, i % 7 === 2 ? fmtDayShort(b.t) : null]).filter((x) => x[1]), yFmt: (v) => v,
+    html: (i) => `<div class="tt">${fmtDay(dayBins[i].t)}</div>${Charts.row(C('--car'), 'Charged', kwh(dayBins[i].kwh) + ' kWh')}${dayBins[i].kwh ? Charts.row('#fff', 'Cost', pounds(dayBins[i].p)) : ''}`,
+  });
+
+  // ---- charges list
+  $('#car-sessions').innerHTML = S.length ? `<div class="sessions">${S.slice(0, 14).map((x) => `
+    <div class="sess">
+      <div class="when"><b>${fmtDay(x.start)}</b><span>${fmtTime(x.start)}–${fmtTime(x.end)} · ${x.hours}h</span></div>
+      <div class="num"><b>${kwh(x.kwh)}</b><span>kWh</span></div>
+      <div class="num"><b>${pounds(x.pence)}</b><span>${x.penceKwh}p/kWh</span></div>
+      <div class="cheap" title="${x.cheapPct}% at the cheap rate"><i style="width:${x.cheapPct ?? 0}%"></i><span>${x.cheapPct ?? '–'}% cheap</span></div>
+      <div class="co2"><span class="chip" style="--c:${x.gPerKwh != null ? carbonColor(x.gPerKwh) : 'var(--ink-3)'}">${x.gPerKwh ?? '–'} g</span></div>
+    </div>`).join('')}</div>` : '<div class="empty">No charges in the last 30 days.</div>';
+
+  // ---- charger 24 h
   if (c.history?.length > 1 && c.history.some((p) => p[1] > 0)) {
     Charts.lines($('#car-chart'), {
       t: c.history.map((p) => p[0]), height: 170, yMax: Math.max(7400, ...c.history.map((p) => p[1])),
@@ -555,9 +718,24 @@ function renderCar(force) {
       tFmt: fmtTime, vFmt: (v) => (v / 1000).toFixed(2) + ' kW',
     });
   } else {
-    $('#car-chart').innerHTML = `<div class="empty">No charging in the last 24 hours${c.history?.length < 20 ? ' (readings started ' + fmtTime(c.history?.[0]?.[0] || Date.now()) + ')' : ''}.</div>`;
+    $('#car-chart').innerHTML = `<div class="empty">No charging in the last 24 hours.</div>`;
   }
+
+  // ---- facts
+  const car = c.car || {};
+  const miPerKwh = car.avgWhPerKm ? (1000 / car.avgWhPerKm) * 0.621371 : null;
+  const fact = (k, val) => (val ? `<div><span>${k}</span><b>${val}</b></div>` : '');
+  $('#car-facts').innerHTML = [
+    fact('Model', [car.make, car.model, car.variant, car.year].filter(Boolean).join(' ')),
+    fact('Battery', car.capacityWh ? Math.round(car.capacityWh / 1000) + ' kWh' : null),
+    fact('Typical efficiency', miPerKwh ? `${miPerKwh.toFixed(1)} miles/kWh` : null),
+    fact('Full charge costs', car.capacityWh && h?.tariff ? `${pounds((car.capacityWh / 1000) * h.tariff.elec.offPeak)} at ${h.tariff.elec.offPeak}p` : null),
+    fact('Charging power', car.maxChargeW ? (car.maxChargeW / 1000).toFixed(1) + ' kW max (AC)' : null),
+    fact('Charger', [c.device?.model, c.device?.firmware && 'firmware ' + c.device.firmware].filter(Boolean).join(' · ')),
+  ].join('');
+
   if (h?.tariff) renderSlots(h, h.tariff);
+  reveal();
 }
 
 // ---------- HISTORY ----------
@@ -606,7 +784,9 @@ function renderHistory(d) {
       <div class="stat"><b>${kwh(T.elec)}<small>kWh</small></b><span>Electricity · ${pounds(T.elecP)}</span></div>
       <div class="stat"><b>${kwh(T.gas)}<small>kWh</small></b><span>Gas · ${pounds(T.gasP)}</span></div>
       <div class="stat"><b>${pounds(T.elecP + T.gasP + T.standingP)}</b><span>Total incl. ${pounds(T.standingP)} standing</span></div>
-      <div class="stat"><b>${Math.round(T.offPeakPct)}<small>%</small></b><span>Electricity at the cheap rate</span></div>`;
+      <div class="stat"><b>${Math.round(T.offPeakPct)}<small>%</small></b><span>Electricity at the cheap rate</span></div>${T.car != null ? `
+      <div class="stat"><b>${kwh(T.house)}<small>kWh</small></b><span>House, without the car</span></div>
+      <div class="stat"><b>${kwh(T.car)}<small>kWh</small></b><span>Car charging · ${T.elec ? Math.round((T.car / T.elec) * 100) : 0}% of it</span></div>` : ''}`;
     const b = h.buckets;
     const money = histMode === 'gbp';
     const per = r === 'year' ? 'week' : r === 'month' ? 'day' : 'half hour';
@@ -614,19 +794,30 @@ function renderHistory(d) {
     const ev = b.map((x) => (money ? x.elecP / 100 : x.elec)), gv = b.map((x) => (money ? x.gasP / 100 : x.gas));
     const fmtV = (v) => (money ? '£' + v.toFixed(2) : kwh(v) + ' kWh');
     const bucketLabel = (t) => (r === 'year' ? 'Week of ' + fmtDayShort(t) : r === 'month' ? fmtDay(t) : fmtDT(t));
+    // with a charger, the electricity charts show the car's share separately (in kWh; costs stay combined)
+    const split = !money && b.some((x) => x.car > 0);
+    $('#h-elec-legend').innerHTML = split ? `<span><i style="--c:var(--elec)"></i>House</span><span><i style="--c:var(--car)"></i>Car</span>` : '';
     if (r === 'day' || r === 'week') {
-      Charts.lines($('#h-elec'), { t: b.map((x) => x.t), height: 170, series: [{ name: 'Electricity', color: C('--elec'), values: ev, area: true, width: 1.5 }],
+      Charts.lines($('#h-elec'), { t: b.map((x) => x.t), height: 170,
+        series: split ? [{ name: 'House', color: C('--elec'), values: b.map((x) => x.house), area: true, width: 1.5 }, { name: 'Car', color: C('--car'), values: b.map((x) => x.car), width: 1.5 }]
+          : [{ name: 'Electricity', color: C('--elec'), values: ev, area: true, width: 1.5 }],
         yFmt: (v) => (money ? '£' + v : v), xTicks: tickFor(b.map((x) => x.t)), tFmt: tF, vFmt: fmtV });
       Charts.lines($('#h-gas'), { t: b.map((x) => x.t), height: 170, series: [{ name: 'Gas', color: C('--gasfuel'), values: gv, area: true, width: 1.5 }],
         yFmt: (v) => (money ? '£' + v : v), xTicks: tickFor(b.map((x) => x.t)), tFmt: tF, vFmt: fmtV });
     } else {
       const xt = b.map((x, i) => [i + 0.5, null, x.t]);
-      const marks = tickFor(b.map((x) => x.t)).map(([t, l]) => [b.findIndex((x) => x.t === t) + 0.5, l]);
+      // labels at least 4 bars apart so neighbours (e.g. "30 Sept" and "2 Oct") don't collide
+      const marks = [];
+      for (const [t, l] of tickFor(b.map((x) => x.t))) {
+        const x = b.findIndex((y) => y.t === t) + 0.5;
+        if (!marks.length || x - marks[marks.length - 1][0] >= 4) marks.push([x, l]);
+      }
       void xt;
       const avg = (a) => a.reduce((s, v) => s + v, 0) / (a.length || 1);
       Charts.bars($('#h-elec'), { t: b.map((x) => x.t), values: ev, color: C('--elec'), height: 170, xTicks: marks, yFmt: (v) => (money ? '£' + v : v),
+        under: split ? b.map((x) => x.car) : null, underColor: C('--car'),
         avg: avg(ev), avgLabel: 'avg ' + fmtV(avg(ev)),
-        html: (i) => `<div class="tt">${bucketLabel(b[i].t)}</div>${Charts.row(C('--elec'), 'Electricity', fmtV(ev[i]))}${money ? '' : Charts.row(C('--good'), 'at cheap rate', kwh(b[i].offPeak) + ' kWh')}` });
+        html: (i) => `<div class="tt">${bucketLabel(b[i].t)}</div>${Charts.row(C('--elec'), 'Electricity', fmtV(ev[i]))}${split ? Charts.row(C('--elec'), 'House', kwh(b[i].house) + ' kWh') + Charts.row(C('--car'), 'Car', kwh(b[i].car) + ' kWh') : ''}${money ? '' : Charts.row(C('--good'), 'at cheap rate', kwh(b[i].offPeak) + ' kWh')}` });
       Charts.bars($('#h-gas'), { t: b.map((x) => x.t), values: gv, color: C('--gasfuel'), height: 170, xTicks: marks, yFmt: (v) => (money ? '£' + v : v),
         avg: avg(gv), avgLabel: 'avg ' + fmtV(avg(gv)),
         html: (i) => `<div class="tt">${bucketLabel(b[i].t)}</div>${Charts.row(C('--gasfuel'), 'Gas', fmtV(gv[i]))}` });

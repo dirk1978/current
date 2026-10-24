@@ -118,6 +118,11 @@ export function startGridHistory() {
 }
 
 // Aggregates for the history screen. bucket: 'half' | 'day' | 'week' | 'month'.
+// Grid carbon intensity (g/kWh) per half hour, for pricing the car's charging in carbon
+export function carbonByHalfHour(from, to) {
+  return new Map(table().prepare('SELECT t, carbon FROM grid_hist WHERE t >= ? AND t < ? AND carbon IS NOT NULL').all(from, to).map((r) => [r.t, r.carbon]));
+}
+
 export function gridHistory(days, bucket) {
   const rows = table().prepare('SELECT * FROM grid_hist WHERE t >= ? ORDER BY t').all(Date.now() - days * DAY);
   const key = bucketKey(bucket);
