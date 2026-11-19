@@ -12,6 +12,8 @@ export function createOhme(env) {
   if (!env.OHME_EMAIL || !env.OHME_PASSWORD) return null;
   const db = openDb();
   db.exec('CREATE TABLE IF NOT EXISTS car_hour (t INTEGER PRIMARY KEY, wh REAL, pence REAL, co2g REAL)');
+  // older versions stored overlapping buckets that didn't start on the hour (see pullHours); drop them
+  db.exec(`DELETE FROM car_hour WHERE t % ${HOUR} <> 0`);
   const s = { token: null, refresh: null, tokenAt: 0, device: null, car: null, session: null, next: null, error: null, updated: 0 };
 
   async function auth() {
@@ -84,11 +86,16 @@ export function createOhme(env) {
   // ---- hourly history: energy, cost and carbon per hour, back a year ----
   const putHour = db.prepare('INSERT OR REPLACE INTO car_hour (t, wh, pence, co2g) VALUES (?, ?, ?, ?)');
   async function pullHours(from, to) {
+    // Ohme's hourly buckets start at startTs, so an unaligned start gives buckets like 00:05-01:05 that overlap
+    // the real hours and double-count; always ask from a whole hour, and store whole-hour buckets only
+    from = Math.floor(from / HOUR) * HOUR;
+    to = Math.ceil(to / HOUR) * HOUR;
     // hourly summaries are slow to build on Ohme's side, so ask for 30 days at a time
     for (let start = from; start < to; start += 30 * DAY) {
       const end = Math.min(to, start + 30 * DAY);
       const r = await api(`/v1/chargeSessions/summary/users/${userId()}?endTs=${end}&granularity=HOUR&startTs=${start}`, 'GET', undefined, 90000);
       for (const h of r.stats || []) {
+        if (h.startTime % HOUR) continue;
         putHour.run(h.startTime, h.energyChargedTotalWh || 0, Number(h.costStats?.moneyCostTotal?.amount ?? 0), h.carbonStats?.carbonReleasedGrams ?? null);
       }
     }
